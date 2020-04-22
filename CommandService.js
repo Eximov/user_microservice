@@ -7,17 +7,21 @@ const app = express();
 const uuid = require('uuid').v4;
 const ROUTING_KEYS = require('./RoutingKeys');
 
+var hostname = 'localhost'; 
+var port = 3000;
 const EXCHANGE_NAME = "User"
+
+
 
 var connection = mysql.createConnection({
     host: 'localhost',
-    user: 'theophile',
+    user: 'tristan',
     password: 'password',
 });
 
 var readStorageConnection = mysql.createConnection({
     host: 'localhost',
-    user: 'theophile',
+    user: 'tristan',
     password: 'password',
 });
 
@@ -50,15 +54,61 @@ function initialisation(callback) {
     app.use(express.urlencoded({ extended: true }));
     app.use(express.json());
     configureRoutes();
-    app.listen(3002);
+    app.listen(port, hostname, function(){
+        console.log("Mon serveur fonctionne sur http://"+ hostname +":"+port); 
+    });
 }
 
 function configureRoutes() {
-    app.post("/user/create", (req, res, next) => {
-        console.log(req.body)
-        User.create(req.body);
-        res.json({});
+    var myRouter = express.Router(); 
+ 
+    myRouter.route('/User')
+    
+    //POST
+    .post(function(req,res){
+        res.json({method: req.body.method,
+        clientName: req.body.clientName,
+        clientId: req.body.clientId,
+        ticketId: req.body.ticketId,
+        methode : req.method});
+        if (req.body.method == 'UserGenerated'){
+            addToEventStore({
+                operation: ROUTING_KEYS.UserGenerated,
+                other: req.body.clientName
+            })
+        }
+        if (req.body.method == "TicketAddedToCart"){
+            addToEventStore({
+                operation: ROUTING_KEYS.TicketAddedToCart,
+                internalId: req.body.clientId,
+                other: req.body.ticketId
+            })
+        }
     })
+    
+    //DELETE
+    .delete(function(req,res){ 
+        res.json({method: req.body.method,
+        clientName: req.body.clientName,
+        clientId: req.body.clientId,
+        ticketId: req.body.ticketId,
+        methode : req.method}); 
+        if (req.body.method == 'UserRemoved'){
+            addToEventStore({
+                operation: ROUTING_KEYS.UserRemoved,
+                other: req.body.clientName
+            })
+        }
+        if (req.body.method == "TicketRemovedFromCart"){
+            addToEventStore({
+                operation: ROUTING_KEYS.TicketRemovedFromCart,
+                internalId: req.body.clientId,
+                other: req.body.ticketId
+            })
+        }
+    }); 
+    
+    app.use(myRouter);  
 }
 
 function subscribeUser(connection) {
@@ -146,7 +196,7 @@ function createTable(callback) {
 function createSorageTable(callback) {
     readStorageConnection.query(`CREATE TABLE IF NOT EXISTS userStorage (
         clienId INT(6) NOT NULL,
-        name VARCHAR(30) NOT NULL
+        name VARCHAR(36) NOT NULL
         );`,
         function (error, results, fields) {
             if (error) throw error;
@@ -161,7 +211,7 @@ function createSorageTable(callback) {
         );`,
         function (error, results, fields) {
             if (error) throw error;
-            console.log('Table tiketStorage created');
+            console.log('Table ticketStorage created');
             if (callback != undefined)
                 callback();
         }
@@ -195,6 +245,7 @@ function removeUser(name) {
 }
 
 function addTicket(id, ticket) {
+    console.log("hello");
     readStorageConnection.query(`INSERT INTO ticketStorage VALUES ( '${id}', '${ticket}')`,
         function (error, results, fields) {
             if (error) throw error;
@@ -230,8 +281,11 @@ function addToEventStore(data) {
                     maxUID = result[0].maxid;
                     addToDatabase(1, maxUID + 1, data.other, data.operation);
                     addUser(maxUID + 1, data.other);
+                    console.log('user ' + data.other + " added");
                 });
             }
+            else { console.log('user ' + data.other + " already exists");
+        }
         });
 
     } else {
@@ -252,7 +306,8 @@ function addToEventStore(data) {
 
                     if (data.operation == ROUTING_KEYS.TicketAddedToCart) {
                         sendToTicket("ticket_reserved", data, function (result) {
-                            console.log(result)
+                            console.log(result);
+
                             if (result == 'available') {
                                 addTicket(data.internalId, data.other);
                             }
@@ -311,11 +366,11 @@ function sendToTicket(queueName, data, callback = () => {}) {
 }
 
 initialisation(() => {
-    addToEventStore({
+    /*addToEventStore({
         operation: ROUTING_KEYS.TicketRemovedFromCart,
         internalId: 33,
         other: '1755d7df-3629-4fb6-89d5-cf29db5f062c'
-    })
+    })*/
     /*sendToTicket("ticket_reserved", {
         ticketId: "0b62d9b4-6c50-4445-bf47-4b6941796bb4",
         clientId: "test"
